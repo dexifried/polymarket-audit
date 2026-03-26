@@ -1,0 +1,14 @@
+[Unit]
+Description=Polymarket Multi-Strategy Orchestrator
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/.openclaw/workspace/skills/polymarket-trading.skill
+EnvironmentFile=/root/.openclaw/workspace/.env
+ExecStart=/usr/bin/node scripts/main_orchestrator.js --paper --capital 1000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

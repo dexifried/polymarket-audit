@@ -1,0 +1,65 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Signals Processed (rate)",
+      "targets": [
+        {
+          "expr": "rate(polymarket_signals_processed_total[1m])",
+          "format": "time_series"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Orders Placed (rate)",
+      "targets": [ { "expr": "rate(polymarket_orders_placed_total[1m])" } ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Fills Received (rate)",
+      "targets": [ { "expr": "rate(polymarket_fills_received_total[1m])" } ],
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Current Exposure",
+      "targets": [ { "expr": "polymarket_current_exposure" } ],
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Consecutive Losses",
+      "targets": [ { "expr": "polymarket_consecutive_losses" } ],
+      "id": 5
+    },
+    {
+      "type": "stat",
+      "title": "WAL Lag (bytes)",
+      "targets": [ { "expr": "polymarket_wal_lag_bytes" } ],
+      "id": 6
+    },
+    {
+      "type": "stat",
+      "title": "Agent Uptime (s)",
+      "targets": [ { "expr": "polymarket_agent_uptime_seconds" } ],
+      "id": 7
+    },
+    {
+      "type": "graph",
+      "title": "Agent Errors (rate)",
+      "targets": [ { "expr": "rate(polymarket_agent_errors_total[5m])" } ],
+      "id": 8
+    }
+  ],
+  "editable": true,
+  "gnetId": null,
+  "schemaVersion": 18,
+  "title": "Polymarket Trading Overview",
+  "uid": "polymarket-trading-overview"
+}

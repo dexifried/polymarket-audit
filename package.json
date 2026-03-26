@@ -1,0 +1,23 @@
+{
+  "name": "polymarket-trading",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "OpenClaw skill to interface with Polymarket trading data",
+  "keywords": ["polymarket","trading","markets","crypto","skill","openclaw","agent"],
+  "scripts": {
+    "fetch-polyglobe": "node scripts/fetch_polyglobe.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "minimist": "^1.2.8",
+    "puppeteer-core": "^22.0.0"
+  },
+  "clawhub": {
+    "name": "polymarket-trading",
+    "version": "1.0.0",
+    "platform": "openclaw",
+    "entry": "index.js",
+    "maintainers": ["your-github-username"],
+    "license": "MIT"
+  }
+}

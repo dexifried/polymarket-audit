@@ -1,0 +1,12 @@
+{
+  "name": "polymarket-metrics-sidecar",
+  "version": "0.1.0",
+  "description": "Lightweight Prometheus metrics sidecar for polymarket-trading skill",
+  "main": "metrics_server.js",
+  "scripts": {
+    "start": "node metrics_server.js"
+  },
+  "dependencies": {
+    "prom-client": "^14.0.0"
+  }
+}
