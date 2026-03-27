@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>⚡ Neural Memory Map</title>
+  <style>
+    :root {
+      --bg: #08101f;
+      --panel: rgba(7, 15, 32, 0.84);
+      --panel-strong: rgba(7, 15, 32, 0.95);
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #e6f1ff;
+      --muted: #93a9c8;
+      --cyan: #00fff7;
+      --magenta: #ff00ff;
+      --gold: #ffd700;
+      --white: #ffffff;
+      --green: #00ff66;
+      --orange: #ff9900;
+      --red: #ff3333;
+      --blue: #60a5fa;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    body {
+      background:
+        radial-gradient(circle at 12% 10%, rgba(0,255,247,0.11), transparent 24%),
+        radial-gradient(circle at 84% 12%, rgba(255,0,255,0.10), transparent 24%),
+        radial-gradient(circle at 52% 84%, rgba(96,165,250,0.08), transparent 30%),
+        #08101f;
+    }
+    #app, #scene { position: absolute; inset: 0; }
+    .header {
+      position: absolute; top: 14px; left: 16px; right: 16px; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 10px 14px; border-radius: 16px; border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(8,16,31,0.95), rgba(8,16,31,0.72));
+      backdrop-filter: blur(12px); box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+    }
+    .title { font-size: 19px; font-weight: 800; letter-spacing: 0.03em; }
+    .meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 12px; align-items: center; }
+    .meta strong { color: var(--text); }
+    .controls { display:flex; gap:8px; }
+    button {
+      appearance:none; border:1px solid rgba(255,255,255,0.14); color:var(--text); cursor:pointer;
+      background:rgba(8,16,31,0.82); padding:9px 12px; border-radius:10px; font-weight:700;
+      box-shadow:0 8px 24px rgba(0,0,0,0.28);
+    }
+    button:hover { border-color: rgba(0,255,247,0.38); box-shadow: 0 0 18px rgba(0,255,247,0.12); }
+    #legend {
+      position:absolute; bottom:16px; left:16px; z-index:10; width:min(420px, calc(100vw - 32px));
+      padding:12px 14px; border-radius:14px; border:1px solid var(--border); background:var(--panel);
+      backdrop-filter: blur(10px); color:var(--muted); font-size:12px;
+    }
+    .legend-grid { display:grid; grid-template-columns: repeat(2, minmax(140px, 1fr)); gap:8px 16px; margin-top:8px; }
+    .swatch { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:8px; vertical-align:middle; }
+    #detail {
+      position:absolute; top:72px; right:0; width:min(300px, 88vw); height:calc(100vh - 88px); z-index:12;
+      transform:translateX(102%); transition:transform 180ms ease; overflow:auto;
+      background:linear-gradient(180deg, rgba(8,16,31,0.96), rgba(8,16,31,0.88));
+      border-left:1px solid var(--border); box-shadow:-16px 0 42px rgba(0,0,0,0.34); padding:16px;
+    }
+    #detail.open { transform:translateX(0); }
+    #detail pre {
+      margin:0; padding:10px; white-space:pre-wrap; word-break:break-word; font-size:12px; line-height:1.45;
+      background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; color:#dbeafe;
+    }
+    #tooltip {
+      position:absolute; z-index:15; display:none; min-width:200px; max-width:320px; pointer-events:none;
+      padding:10px 12px; border-radius:12px; background:rgba(7,13,26,0.94); border:1px solid rgba(255,255,255,0.12);
+      box-shadow:0 12px 30px rgba(0,0,0,0.4); font-size:12px; line-height:1.4;
+    }
+    #tooltip .kind { color: var(--cyan); font-size:11px; text-transform:uppercase; letter-spacing:0.08em; font-weight:700; }
+    .detail-top { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+    .sub { color: var(--muted); margin-bottom: 12px; }
+    @media (max-width: 760px) { .title { font-size:16px; } .meta { gap:8px; } .legend-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="scene"></div>
+    <div class="header">
+      <div>
+        <div class="title">⚡ Neural Memory Map</div>
+        <div class="meta">
+          <span id="status">Booting neural view…</span>
+          <span><strong id="counts">Nodes 0 • Edges 0</strong></span>
+          <span>Active <strong id="activeAgents">0</strong></span>
+          <span id="sseState">SSE connecting…</span>
+          <span id="rotationState">Auto-rotate on</span>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="refreshBtn">Refresh</button>
+      </div>
+    </div>
+    <div id="tooltip"></div>
+    <aside id="detail">
+      <div class="detail-top">
+        <h2 id="detailTitle" style="margin:0;font-size:18px;">Node Details</h2>
+        <button id="closeDetail">Close</button>
+      </div>
+      <div class="sub" id="detailSubtitle">Click a node to inspect metadata</div>
+      <pre id="detailBody"></pre>
+    </aside>
+    <div id="legend">
+      <div><strong>Legend</strong> — drag to orbit, scroll to zoom, click for metadata, hover for tooltip, <strong>space</strong> toggles auto-rotation, <strong>ESC</strong> closes the detail panel.</div>
+      <div class="legend-grid">
+        <div><span class="swatch" style="background:#00fff7"></span>Atomic facts</div>
+        <div><span class="swatch" style="background:#ff00ff"></span>Foresights</div>
+        <div><span class="swatch" style="background:#ffffff"></span>Open positions</div>
+        <div><span class="swatch" style="background:#ffd700"></span>Closed trades</div>
+        <div><span class="swatch" style="background:#7c3aed"></span>Politics centroid</div>
+        <div><span class="swatch" style="background:#84cc16"></span>Sports centroid</div>
+        <div><span class="swatch" style="background:#f59e0b"></span>Crypto centroid</div>
+        <div><span class="swatch" style="background:#dc2626"></span>Conflict / evolver</div>
+        <div><span class="swatch" style="background:#60a5fa"></span>Retriever / memory flow</div>
+        <div><span class="swatch" style="background:linear-gradient(90deg, red, orange, yellow, green, cyan, blue, violet)"></span>Dex / learnings / daily memory</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from '/three.module.js';
+    import { OrbitControls } from '/OrbitControls.js';
+
+    const MAX_NODES = 500;
+    const MAX_EDGES = 1000;
+    const AUTO_REFRESH_MS = 30000;
+    const CATEGORY_COLORS = {
+      politics: '#7c3aed', sports: '#84cc16', crypto: '#f59e0b', conflict: '#dc2626', other: '#64748b'
+    };
+    const CATEGORY_OFFSETS = {
+      politics: new THREE.Vector3(-8, 0, -8),
+      sports: new THREE.Vector3(8, 0, -8),
+      crypto: new THREE.Vector3(-8, 0, 8),
+      conflict: new THREE.Vector3(8, 0, 8),
+      other: new THREE.Vector3(0, 0, 0),
+    };
+    const AGENTS = {
+      Dex: { color: '#ffffff', pos: new THREE.Vector3(0, 7, -1), rainbow: true },
+      Judge: { color: '#ff3333', pos: new THREE.Vector3(7, 5, -2) },
+      Watchman: { color: '#ff9900', pos: new THREE.Vector3(10, 0.5, 0) },
+      Trader: { color: '#00ff66', pos: new THREE.Vector3(6, -6, 3) },
+      Collector: { color: '#22d3ee', pos: new THREE.Vector3(-6, -6, 3) },
+      Retriever: { color: '#60a5fa', pos: new THREE.Vector3(-10, 0.5, 0) },
+    };
+    const DECISION_COLORS = { BUY: '#00ff66', REJECT: '#ff3333', SKIP: '#60a5fa', NO_TRADE: '#9ca3af' };
+
+    const sceneEl = document.getElementById('scene');
+    const statusEl = document.getElementById('status');
+    const countsEl = document.getElementById('counts');
+    const activeAgentsEl = document.getElementById('activeAgents');
+    const sseStateEl = document.getElementById('sseState');
+    const rotationStateEl = document.getElementById('rotationState');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const tooltipEl = document.getElementById('tooltip');
+    const detailEl = document.getElementById('detail');
+    const detailTitleEl = document.getElementById('detailTitle');
+    const detailSubtitleEl = document.getElementById('detailSubtitle');
+    const detailBodyEl = document.getElementById('detailBody');
+    const closeDetailBtn = document.getElementById('closeDetail');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#08101f');
+    const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 1200);
+    camera.position.set(0, 10, 26);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    sceneEl.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.set(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const dir = new THREE.DirectionalLight(0xc7d2fe, 1.3); dir.position.set(9, 16, 8); scene.add(dir);
+    const fill = new THREE.PointLight(0x22d3ee, 1.5, 120); fill.position.set(-10, 8, 6); scene.add(fill);
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const root = new THREE.Group();
+    const edgeGroup = new THREE.Group();
+    const nodeGroup = new THREE.Group();
+    const tempGroup = new THREE.Group();
+    root.add(edgeGroup, nodeGroup, tempGroup);
+    scene.add(root);
+    scene.add(createStarfield());
+
+    const graph = { nodes: new Map(), edges: [], byMesh: new Map(), agents: new Map(), packets: [], breakdownPool: [], activeBreakdowns: [], ripples: [], retrievalBursts: [] };
+    const runtime = { autoRotate: true, source: null, lastRealEvent: 0, lastPointer: { x: 0, y: 0 }, lastWakeFlashAt: 0, simulatedThinking: new Map(), lastEmpty: true };
+
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+    function truncate(text, max = 90) { const s = String(text || '').trim(); return s.length > max ? `${s.slice(0, max - 1)}…` : (s || '—'); }
+    function safeArray(v) { return Array.isArray(v) ? v : []; }
+    function hashString(str) { let h = 2166136261; const s = String(str || ''); for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+    function color(v) { return new THREE.Color(v); }
+    function rainbowColor(t = performance.now() * 0.00012) { return new THREE.Color().setHSL((t % 1), 0.9, 0.6); }
+    function flattenText(obj) {
+      if (obj == null) return '';
+      if (typeof obj === 'string') return obj;
+      if (Array.isArray(obj)) return obj.map(flattenText).join(' ');
+      if (typeof obj === 'object') return Object.values(obj).map(flattenText).join(' ');
+      return String(obj);
+    }
+    function parseJsonl(text) {
+      return String(text || '').split(/\n+/).map(line => line.trim()).filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return { raw: line }; } });
+    }
+    function categoryOf(item) {
+      const raw = String(item?.category || item?.market_category || item?.topic || item?.bucket || item?.tag || '').toLowerCase();
+      if (raw.includes('polit')) return 'politics';
+      if (raw.includes('sport')) return 'sports';
+      if (raw.includes('crypto') || raw.includes('bitcoin') || raw.includes('eth')) return 'crypto';
+      if (raw.includes('war') || raw.includes('conflict') || raw.includes('geo') || raw.includes('military')) return 'conflict';
+      return CATEGORY_COLORS[raw] ? raw : 'other';
+    }
+    function extractLabel(item) {
+      return item?.question || item?.market_question || item?.title || item?.summary || item?.content || item?.text || item?.fact || item?.file || item?.id || 'Untitled';
+    }
+    function textTokens(text) { return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2)); }
+    function tokenSimilarity(a, b) { const sa = textTokens(a), sb = textTokens(b); if (!sa.size || !sb.size) return 0; let common = 0; for (const t of sa) if (sb.has(t)) common++; return common / Math.sqrt(sa.size * sb.size); }
+    function cosine(a, b) { if (!Array.isArray(a) || !Array.isArray(b) || !a.length || a.length !== b.length) return null; let dot = 0, na = 0, nb = 0; for (let i = 0; i < a.length; i++) { const av = Number(a[i]) || 0; const bv = Number(b[i]) || 0; dot += av * bv; na += av * av; nb += bv * bv; } return na && nb ? dot / Math.sqrt(na * nb) : null; }
+    function htmlEscape(str) { return String(str || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+    async function fetchJson(url, fallback) {
+      try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return await res.json(); } catch (err) { console.warn(url, err); return fallback; }
+    }
+    async function fetchText(url, fallback = '') {
+      try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return await res.text(); } catch (err) { console.warn(url, err); return fallback; }
+    }
+
+    function createStarfield() {
+      const geometry = new THREE.BufferGeometry();
+      const points = [];
+      for (let i = 0; i < 300; i++) points.push((Math.random() - 0.5) * 240, (Math.random() - 0.5) * 160, (Math.random() - 0.5) * 240);
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+      return new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xffffff, size: 0.34, transparent: true, opacity: 0.7, sizeAttenuation: true }));
+    }
+    function makeCircleTexture(hex) {
+      const size = 128; const canvas = document.createElement('canvas'); canvas.width = canvas.height = size; const ctx = canvas.getContext('2d');
+      const g = ctx.createRadialGradient(size/2, size/2, 6, size/2, size/2, size/2); g.addColorStop(0, hex); g.addColorStop(0.45, hex + 'bb'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+      const tex = new THREE.CanvasTexture(canvas); tex.needsUpdate = true; return tex;
+    }
+    function makeLabel(text, colorHex = '#e6f1ff') {
+      const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 160; const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,canvas.width,canvas.height); ctx.font = '700 44px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(8,16,31,0.65)'; ctx.fillRect(32, 44, 448, 72); ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.strokeRect(32, 44, 448, 72);
+      ctx.fillStyle = colorHex; ctx.fillText(text, canvas.width / 2, 80);
+      const tex = new THREE.CanvasTexture(canvas); tex.needsUpdate = true;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+      sprite.scale.set(3.8, 1.2, 1); return sprite;
+    }
+    function makeTextSprite(text, colorHex = '#ffffff', bg = 'rgba(8,16,31,0.6)') {
+      const canvas = document.createElement('canvas'); canvas.width = 420; canvas.height = 120; const ctx = canvas.getContext('2d');
+      ctx.fillStyle = bg; ctx.fillRect(18, 22, 384, 76); ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.strokeRect(18, 22, 384, 76);
+      ctx.font = '700 34px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = colorHex; ctx.fillText(text, 210, 60);
+      const tex = new THREE.CanvasTexture(canvas); tex.needsUpdate = true;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })); sprite.scale.set(2.4, 0.75, 1); return sprite;
+    }
+    function createNodeMesh(type, baseColor, radius, wireframe = false) {
+      let geometry;
+      if (type === 'agent') geometry = new THREE.IcosahedronGeometry(radius, 0);
+      else if (type === 'foresight' || type === 'evolver') geometry = new THREE.OctahedronGeometry(radius, 0);
+      else if (type === 'daily') geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
+      else geometry = new THREE.SphereGeometry(radius, 18, 18);
+      const mat = new THREE.MeshStandardMaterial({ color: baseColor, emissive: new THREE.Color(baseColor).multiplyScalar(0.35), roughness: 0.4, metalness: 0.18, transparent: true, opacity: 1, wireframe });
+      return new THREE.Mesh(geometry, mat);
+    }
+    function createAgentNode(name, cfg) {
+      const group = new THREE.Group();
+      const mesh = createNodeMesh('agent', cfg.color, 0.8, false);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.12, 0.08, 14, 48), new THREE.MeshBasicMaterial({ color: cfg.color, transparent: true, opacity: 0 }));
+      ring.rotation.x = Math.PI / 2;
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeCircleTexture(cfg.rainbow ? '#ffffff' : cfg.color), transparent: true, opacity: 0.32, depthWrite: false })); halo.scale.set(3.5, 3.5, 1);
+      const label = makeLabel(name, cfg.rainbow ? '#ffffff' : cfg.color); label.position.set(0, -1.45, 0);
+      group.add(halo, mesh, ring, label); group.position.copy(cfg.pos);
+      return { group, mesh, ring, halo, label };
+    }
+    function clearSceneGraph() {
+      for (const edge of graph.edges) edgeGroup.remove(edge.line);
+      graph.edges = [];
+      for (const node of graph.nodes.values()) nodeGroup.remove(node.container);
+      graph.nodes.clear(); graph.byMesh.clear(); graph.agents.clear();
+    }
+    function registerNode(node) {
+      if (graph.nodes.size >= MAX_NODES || graph.nodes.has(node.id)) return graph.nodes.get(node.id);
+      graph.nodes.set(node.id, node); nodeGroup.add(node.container); graph.byMesh.set(node.mesh, node); return node;
+    }
+    function addEdge(sourceId, targetId, colorHex = '#ffffff', opacity = 0.12, dashed = false, similarity = null) {
+      if (graph.edges.length >= MAX_EDGES || !graph.nodes.has(sourceId) || !graph.nodes.has(targetId) || sourceId === targetId) return;
+      const source = graph.nodes.get(sourceId), target = graph.nodes.get(targetId);
+      const geometry = new THREE.BufferGeometry().setFromPoints([source.container.position, target.container.position]);
+      const material = dashed
+        ? new THREE.LineDashedMaterial({ color: colorHex, transparent: true, opacity, dashSize: 0.26, gapSize: 0.2 })
+        : new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity });
+      const line = new THREE.Line(geometry, material); if (dashed) line.computeLineDistances();
+      line.userData = { sourceId, targetId, baseOpacity: opacity, similarity: similarity || 0 };
+      graph.edges.push({ sourceId, targetId, line, material, dashed, boostedUntil: 0 }); edgeGroup.add(line);
+    }
+    function makeNode(def) {
+      const container = new THREE.Group();
+      const mesh = createNodeMesh(def.shape, def.color, def.radius, !!def.wireframe);
+      const haloColor = def.haloColor || def.color;
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeCircleTexture(haloColor), transparent: true, opacity: def.haloOpacity ?? 0.18, depthWrite: false }));
+      halo.scale.set((def.radius || 0.3) * 6, (def.radius || 0.3) * 6, 1);
+      container.add(halo, mesh); container.position.copy(def.position);
+      if (def.labelSprite) { def.labelSprite.position.set(0, -(def.radius + 0.55), 0); container.add(def.labelSprite); }
+      const node = { ...def, container, mesh, halo, accessCount: def.accessCount || 0, lastHitAt: performance.now(), targetScale: 1, targetOpacity: def.opacity ?? 1, pulseUntil: 0, flashUntil: 0, emissiveBoost: 0, thinking: false, ring: null };
+      if (def.type === 'agent') node.ring = def.ring;
+      registerNode(node);
+      return node;
+    }
+    function randomClusterPos(category, spread = 2.8) {
+      const base = CATEGORY_OFFSETS[category] || CATEGORY_OFFSETS.other;
+      return base.clone().add(new THREE.Vector3((Math.random()-0.5)*spread, (Math.random()-0.5)*spread, (Math.random()-0.5)*spread));
+    }
+    function addCentroids() {
+      for (const [category, colorHex] of Object.entries(CATEGORY_COLORS)) {
+        const container = new THREE.Group();
+        const mesh = new THREE.Mesh(new THREE.SphereGeometry(1.5, 18, 18), new THREE.MeshBasicMaterial({ color: colorHex, wireframe: true, transparent: true, opacity: 0.28 }));
+        container.add(mesh); container.position.copy(CATEGORY_OFFSETS[category]);
+        const node = { id: `centroid:${category}`, type: 'centroid', label: `${category} centroid`, text: `${category} category cluster`, color: colorHex, radius: 1.5, opacity: 0.28, meta: { category }, container, mesh, halo: null, accessCount: 0, lastHitAt: performance.now(), targetScale: 1, targetOpacity: 0.28, thinking: false };
+        registerNode(node);
+      }
+    }
+    function buildAgentRing(state) {
+      for (const [name, cfg] of Object.entries(AGENTS)) {
+        const agent = createAgentNode(name, cfg);
+        const isThinking = safeArray(state?.agentGraph?.nodes).some(n => String(n?.label || n?.id || '').toLowerCase().includes(name.toLowerCase()) && n?.called);
+        const node = { id: `agent:${name.toLowerCase()}`, type: 'agent', label: name, text: name === 'Dex' ? 'Meta-coordinator' : `${name} subsystem`, color: cfg.color, radius: 0.8, opacity: 1, meta: { ...(safeArray(state?.agentGraph?.nodes).find(n => String(n?.label || n?.id || '').toLowerCase().includes(name.toLowerCase())) || {}) }, container: agent.group, mesh: agent.mesh, halo: agent.halo, ring: agent.ring, labelSprite: agent.label, accessCount: 0, lastHitAt: performance.now(), targetScale: 1, targetOpacity: 1, thinking: !!isThinking };
+        registerNode(node); graph.agents.set(name, node);
+      }
+      const links = [['Dex','Judge'],['Dex','Watchman'],['Dex','Trader'],['Dex','Collector'],['Dex','Retriever'],['Collector','Retriever'],['Retriever','Watchman'],['Trader','Judge'],['Trader','Watchman']];
+      links.forEach(([a,b]) => addEdge(`agent:${a.toLowerCase()}`, `agent:${b.toLowerCase()}`, '#ffd700', 0.1, false));
+    }
+    function buildMemoryGraph(data) {
+      const factNodes = []; const foresightNodes = []; const tradeNodes = []; const decisionNodes = []; const learningNodes = []; const allMemory = [];
+      safeArray(data.openPositions).slice(0, 60).forEach((position, idx) => {
+        const category = categoryOf(position); const node = makeNode({ id: `position:${position.id || position.position_id || idx || hashString(JSON.stringify(position))}`, type: 'open-position', label: extractLabel(position), text: extractLabel(position), color: '#ffffff', radius: 0.6, opacity: 1, position: randomClusterPos(category, 2.2), meta: position, shape: 'sphere', haloOpacity: 0.28, category });
+        tradeNodes.push(node); allMemory.push(node); addEdge(node.id, `centroid:${category}`, CATEGORY_COLORS[category], 0.1, true);
+      });
+      safeArray(data.trades).slice(-120).forEach((trade, idx) => {
+        const category = categoryOf(trade); const node = makeNode({ id: `trade:${trade.id || trade.trade_id || idx || hashString(JSON.stringify(trade))}`, type: 'closed-trade', label: extractLabel(trade), text: extractLabel(trade), color: '#ffd700', radius: 0.25, opacity: 0.4, position: randomClusterPos(category, 3.1), meta: trade, shape: 'sphere', category });
+        tradeNodes.push(node); allMemory.push(node); addEdge(node.id, `centroid:${category}`, CATEGORY_COLORS[category], 0.1, true);
+      });
+      safeArray(data.decisions).slice(-140).forEach((decision, idx) => {
+        const type = String(decision.type || decision.action || 'NO_TRADE').toUpperCase(); const category = categoryOf(decision);
+        const node = makeNode({ id: `decision:${decision.id || decision.decision_id || idx || hashString(JSON.stringify(decision))}`, type: 'decision', label: `${type} • ${extractLabel(decision)}`, text: extractLabel(decision), color: DECISION_COLORS[type] || '#9ca3af', radius: 0.1, opacity: 0.8, position: randomClusterPos(category, 4.1), meta: decision, shape: 'sphere', category, haloOpacity: 0.06 });
+        decisionNodes.push(node); allMemory.push(node);
+        ['Judge','Trader','Watchman'].forEach(agent => addEdge(`agent:${agent.toLowerCase()}`, node.id, '#ffd700', 0.2, false));
+      });
+      safeArray(data.atomicFacts).slice(-180).forEach((fact, idx) => {
+        const category = categoryOf(fact); const node = makeNode({ id: `fact:${fact.id || fact.fact_id || idx || hashString(JSON.stringify(fact))}`, type: 'atomic-fact', label: truncate(extractLabel(fact), 56), text: extractLabel(fact), color: '#00fff7', radius: 0.3, opacity: 0.95, position: randomClusterPos(category, 3.3), meta: fact, shape: 'sphere', category });
+        factNodes.push(node); allMemory.push(node); addEdge(node.id, `centroid:${category}`, CATEGORY_COLORS[category], 0.1, true);
+      });
+      safeArray(data.foresights).slice(-120).forEach((foresight, idx) => {
+        const category = categoryOf(foresight); const node = makeNode({ id: `foresight:${foresight.id || foresight.foresight_id || idx || hashString(JSON.stringify(foresight))}`, type: 'foresight', label: truncate(extractLabel(foresight), 56), text: extractLabel(foresight), color: '#ff00ff', radius: 0.3, opacity: 0.95, position: randomClusterPos(category, 2.9), meta: foresight, shape: 'foresight', category });
+        foresightNodes.push(node); allMemory.push(node); addEdge(node.id, `centroid:${category}`, CATEGORY_COLORS[category], 0.1, true);
+      });
+      safeArray(data.learnings).slice(-40).forEach((item, idx) => {
+        const pos = AGENTS.Dex.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*4, (Math.random()-0.5)*2.5, (Math.random()-0.5)*4));
+        const node = makeNode({ id: `learning:${item.file || idx}`, type: 'learning', label: item.file || `learning ${idx+1}`, text: item.content || '', color: '#ffffff', radius: 0.35, opacity: 0.92, position: pos, meta: item, shape: 'sphere', haloOpacity: 0.26 });
+        learningNodes.push(node); allMemory.push(node); addEdge('agent:dex', node.id, '#ffffff', 0.2, false);
+      });
+      safeArray(data.daily).slice(-20).forEach((item, idx) => {
+        const pos = AGENTS.Dex.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*5, -2 + (Math.random()-0.5)*2.5, (Math.random()-0.5)*5));
+        const node = makeNode({ id: `daily:${item.file || idx}`, type: 'daily', label: item.file || `daily ${idx+1}`, text: item.content || '', color: '#ffffff', radius: 0.25, opacity: 0.75, position: pos, meta: item, shape: 'daily', wireframe: true, haloOpacity: 0.14 });
+        allMemory.push(node); addEdge('agent:dex', node.id, '#ffffff', 0.16, false);
+      });
+      safeArray(data.evolver).slice(-80).forEach((item, idx) => {
+        const category = categoryOf(item); const pos = randomClusterPos(category === 'other' ? 'conflict' : category, 2.7); pos.y += 3.2;
+        const node = makeNode({ id: `evolver:${item.id || idx || hashString(JSON.stringify(item))}`, type: 'evolver', label: truncate(extractLabel(item), 56), text: flattenText(item), color: '#ff3333', radius: 0.3, opacity: 0.96, position: pos, meta: item, shape: 'evolver', category });
+        allMemory.push(node); addEdge('agent:judge', node.id, '#ff3333', 0.16, false);
+      });
+
+      factNodes.slice(0, 140).forEach((fact, i) => {
+        const trade = tradeNodes[i % Math.max(1, tradeNodes.length)]; if (trade) addEdge(trade.id, fact.id, '#00fff7', 0.3, false);
+      });
+      foresightNodes.slice(0, 120).forEach((foresight, i) => {
+        const posNode = safeArray(data.openPositions).length ? graph.nodes.get(`position:${safeArray(data.openPositions)[i % safeArray(data.openPositions).length]?.id || safeArray(data.openPositions)[i % safeArray(data.openPositions).length]?.position_id || i % safeArray(data.openPositions).length}`) : null;
+        const fallback = tradeNodes[i % Math.max(1, tradeNodes.length)]; const source = posNode || fallback; if (source) addEdge(source.id, foresight.id, '#ff00ff', 0.3, false);
+      });
+      for (let i = 0; i < factNodes.length; i++) {
+        for (let j = i + 1; j < Math.min(factNodes.length, i + 14); j++) {
+          const a = factNodes[i], b = factNodes[j]; if (a.category !== b.category) continue;
+          const sim = cosine(a.meta?.embedding || a.meta?.vector, b.meta?.embedding || b.meta?.vector) ?? tokenSimilarity(a.text, b.text);
+          if (sim > 0.5) addEdge(a.id, b.id, '#ffffff', clamp(sim * 0.3, 0.08, 0.3), false, sim);
+        }
+      }
+      learningNodes.forEach(node => {
+        ['Dex','Judge','Watchman','Trader','Collector','Retriever'].forEach(agent => { if (node.text.toLowerCase().includes(agent.toLowerCase())) addEdge(node.id, `agent:${agent.toLowerCase()}`, '#ffffff', 0.2, false); });
+      });
+    }
+
+    function updateStats() {
+      countsEl.textContent = `Nodes ${graph.nodes.size} • Edges ${graph.edges.length}`;
+      const active = [...graph.agents.values()].filter(a => a.thinking).length; activeAgentsEl.textContent = String(active);
+    }
+    function setStatus(msg, critical = false) { statusEl.textContent = msg; statusEl.style.color = critical ? '#fca5a5' : ''; }
+    function openDetail(node) { detailEl.classList.add('open'); detailTitleEl.textContent = node.label || node.id; detailSubtitleEl.textContent = `${node.type} • ${truncate(node.text || '', 120)}`; detailBodyEl.textContent = JSON.stringify(node.meta || {}, null, 2); }
+    function closeDetail() { detailEl.classList.remove('open'); }
+
+    function applyWakeFlash() {
+      runtime.lastWakeFlashAt = performance.now() + 1000;
+      for (const node of graph.nodes.values()) node.flashUntil = Math.max(node.flashUntil || 0, performance.now() + 1000);
+    }
+    function hitNode(node, amount = 1) { if (!node) return; node.accessCount += amount; node.lastHitAt = performance.now(); node.emissiveBoost = Math.max(node.emissiveBoost, 1.5); }
+    function thinkingNameToId(name) { const key = String(name || '').toLowerCase(); for (const agent of Object.keys(AGENTS)) if (agent.toLowerCase() === key || `agent:${agent.toLowerCase()}` === key) return `agent:${agent.toLowerCase()}`; return `agent:${key}`; }
+    function setThinking(agentName, active) { const node = graph.nodes.get(thinkingNameToId(agentName)); if (!node) return; node.thinking = !!active; node.lastHitAt = performance.now(); if (active) hitNode(node, 1); updateStats(); }
+
+    function ensurePacketPool() {
+      while (graph.packets.length < 20) {
+        const leader = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 10), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0 }));
+        const trails = [];
+        for (let i = 0; i < 4; i++) { const t = new THREE.Mesh(new THREE.SphereGeometry(0.045 - i*0.007, 8, 8), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0 })); tempGroup.add(t); trails.push(t); }
+        tempGroup.add(leader); graph.packets.push({ leader, trails, active: false, start: new THREE.Vector3(), end: new THREE.Vector3(), born: 0, duration: 1500, color: '#ffffff' });
+      }
+    }
+    function spawnPacket(sourceName, targetName, sourceColor = '#ffffff') {
+      ensurePacketPool();
+      const source = graph.nodes.get(thinkingNameToId(sourceName)); const target = graph.nodes.get(thinkingNameToId(targetName));
+      if (!source || !target) return;
+      const pkt = graph.packets.find(p => !p.active); if (!pkt) return;
+      pkt.active = true; pkt.born = performance.now(); pkt.start.copy(source.container.position); pkt.end.copy(target.container.position); pkt.color = sourceColor;
+      pkt.leader.material.color.set(sourceColor); pkt.leader.material.opacity = 1; pkt.leader.position.copy(pkt.start); hitNode(source, 0.5); hitNode(target, 0.5);
+      pkt.trails.forEach((trail, i) => { trail.material.color.set(sourceColor); trail.material.opacity = 0.5 - i*0.1; trail.position.copy(pkt.start); });
+    }
+    function ensureBreakdownPool() {
+      while (graph.breakdownPool.length < 8) {
+        const group = new THREE.Group();
+        const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0 }));
+        const sprite = makeTextSprite('score', '#ffffff'); sprite.position.set(0, 0.42, 0);
+        group.add(mesh, sprite); tempGroup.add(group); graph.breakdownPool.push({ group, mesh, sprite, active: false, born: 0, life: 3000 });
+      }
+    }
+    function spawnScoringBreakdown(decision) {
+      ensureBreakdownPool(); const judge = graph.agents.get('Judge'); if (!judge) return;
+      const entries = [
+        ['imbalance', decision?.imbalancePass ?? decision?.imbalance ?? decision?.features?.imbalance],
+        ['spread', decision?.spreadPass ?? decision?.spread ?? decision?.features?.spread_bps != null ? `${decision.features.spread_bps}bps` : decision?.features?.spread],
+        ['mispricing', decision?.mispricingPass ?? decision?.mispricing],
+        ['score', decision?.score ?? decision?.compositeScore ?? decision?.edgeScore ?? decision?.features?.score ?? '?']
+      ];
+      entries.forEach(([label, value], idx) => {
+        const slot = graph.breakdownPool.find(x => !x.active); if (!slot) return;
+        slot.active = true; slot.born = performance.now();
+        slot.group.position.copy(judge.container.position).add(new THREE.Vector3((idx - 1.5) * 0.9, 1.2 + idx * 0.18, 0.8));
+        let c, displayText;
+        if (label === 'score') {
+          const s = typeof value === 'number' ? value : parseFloat(value) || 0;
+          c = s >= 0.7 ? '#00ff66' : s >= 0.5 ? '#ffd700' : '#ff3333';
+          displayText = `score ${typeof value === 'number' ? value.toFixed(2) : value}`;
+        } else {
+          const numVal = typeof value === 'number' ? value : parseFloat(value);
+          const isPass = String(value).toLowerCase() === 'true' || value === 1 || String(value).toLowerCase() === 'pass' || (label === 'imbalance' && Number.isFinite(numVal) && Math.abs(numVal) >= 0.1) || (label === 'spread' && Number.isFinite(numVal) && numVal <= 200);
+          c = isPass ? '#00ff66' : '#ff3333';
+          displayText = Number.isFinite(numVal) ? `${label} ${numVal}` : `${label} ${value ?? '?'}`;
+        }
+        slot.mesh.material.color.set(c); slot.mesh.material.opacity = 0.92; slot.sprite.material.map.dispose?.(); slot.group.remove(slot.sprite); slot.sprite = makeTextSprite(displayText, c); slot.sprite.position.set(0, 0.42, 0); slot.group.add(slot.sprite);
+      });
+    }
+    function spawnRipple(position, colorHex = '#ff3333', life = 1500) {
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 48), new THREE.MeshBasicMaterial({ color: colorHex, side: THREE.DoubleSide, transparent: true, opacity: 0.6 }));
+      mesh.rotation.x = -Math.PI / 2; mesh.position.copy(position); tempGroup.add(mesh); graph.ripples.push({ mesh, born: performance.now(), life });
+    }
+    function triggerErrorRipple(agentName = 'Judge') {
+      const node = graph.nodes.get(thinkingNameToId(agentName)) || graph.agents.get('Judge'); if (!node) return;
+      node.flashUntil = performance.now() + 500; node.container.scale.setScalar(1.3); spawnRipple(node.container.position, '#ff3333', 1500); hitNode(node, 1.5);
+      graph.edges.forEach(edge => { if (edge.sourceId === node.id || edge.targetId === node.id) edge.boostedUntil = performance.now() + 300; });
+    }
+    function triggerRetrievalGlow(hitIds = []) {
+      const retriever = graph.agents.get('Retriever'); if (!retriever) return;
+      retriever.flashUntil = performance.now() + 300; retriever.container.scale.setScalar(1.5); spawnRipple(retriever.container.position, '#ffffff', 1000); hitNode(retriever, 1.5);
+      const targets = hitIds.length ? hitIds.map(id => graph.nodes.get(id)).filter(Boolean) : [...graph.nodes.values()].filter(n => n.type !== 'agent' && n.type !== 'centroid').sort(() => Math.random() - 0.5).slice(0, 8);
+      targets.forEach(node => { node.emissiveBoost = Math.max(node.emissiveBoost, 2); hitNode(node, 2); graph.edges.forEach(edge => { if (edge.sourceId === node.id || edge.targetId === node.id) edge.boostedUntil = performance.now() + 3000; }); });
+    }
+    function addOrPulseNode(kind, payload) {
+      const label = extractLabel(payload); const category = categoryOf(payload);
+      const def = { new_trade: ['closed-trade', '#ffd700', 0.25, 'sphere'], new_fact: ['atomic-fact', '#00fff7', 0.3, 'sphere'], new_foresight: ['foresight', '#ff00ff', 0.3, 'foresight'], new_learning: [payload.kind === 'daily_memory' ? 'daily' : 'learning', '#ffffff', payload.kind === 'daily_memory' ? 0.25 : 0.35, payload.kind === 'daily_memory' ? 'daily' : 'sphere'], evolver_finding: ['evolver', '#ff3333', 0.3, 'evolver'] }[kind];
+      if (!def || graph.nodes.size >= MAX_NODES) return;
+      const [type, colorHex, radius, shape] = def;
+      const id = `${kind}:${payload.id || payload.file || hashString(JSON.stringify(payload))}`;
+      const existing = graph.nodes.get(id); if (existing) { hitNode(existing, 1); return existing; }
+      const pos = kind === 'new_learning' ? AGENTS.Dex.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*5, (Math.random()-0.5)*2.5, (Math.random()-0.5)*5)) : randomClusterPos(category, 3);
+      const node = makeNode({ id, type, label: truncate(label, 58), text: flattenText(payload), color: colorHex, radius, opacity: type === 'closed-trade' ? 0.4 : 0.95, position: pos, meta: payload, shape, category, wireframe: type === 'daily' });
+      hitNode(node, 2);
+      if (type === 'atomic-fact' || type === 'foresight' || type === 'closed-trade' || type === 'evolver') addEdge(node.id, `centroid:${category}`, CATEGORY_COLORS[category] || '#64748b', 0.1, true);
+      if (type === 'learning' || type === 'daily') addEdge('agent:dex', node.id, '#ffffff', 0.2, false);
+      if (type === 'evolver' && ['high', 'critical'].includes(String(payload?.severity || '').toLowerCase())) triggerErrorRipple('Judge');
+      updateStats(); return node;
+    }
+
+    function normalizeData(raw) {
+      return {
+        decisions: safeArray(raw.decisions), trades: safeArray(raw.trades), state: raw.state || {}, regime: safeArray(raw.regime),
+        atomicFacts: safeArray(raw.atomicFacts), foresights: safeArray(raw.foresights), profiles: raw.profiles || {},
+        learnings: safeArray(raw.learnings), daily: safeArray(raw.daily), evolver: safeArray(raw.evolver), openPositions: safeArray((raw.state || {}).openPositions || (raw.state || {}).account?.openPositions)
+      };
+    }
+
+    async function loadAll() {
+      const [decisions, trades, state, regime, atomicText, foresightText, profiles, learnings, daily, evolver] = await Promise.all([
+        fetchJson('/api/decisions?limit=500', []),
+        fetchJson('/api/trades?limit=200', []),
+        fetchJson('/api/state', {}),
+        fetchJson('/api/regime?limit=50', []),
+        fetchText('/api/memory/atomic-facts', ''),
+        fetchText('/api/memory/foresights', ''),
+        fetchJson('/api/memory/profiles', {}),
+        fetchJson('/api/memory/learnings', []),
+        fetchJson('/api/memory/daily', []),
+        fetchJson('/api/memory/evolver', []),
+      ]);
+      const data = normalizeData({ decisions, trades, state, regime, atomicFacts: parseJsonl(atomicText), foresights: parseJsonl(foresightText), profiles, learnings, daily, evolver });
+      clearSceneGraph(); addCentroids(); buildAgentRing(state); buildMemoryGraph(data); updateStats();
+      const realNodes = [...graph.nodes.values()].filter(n => n.type !== 'centroid');
+      const wasEmpty = runtime.lastEmpty; runtime.lastEmpty = realNodes.length === 0;
+      if (realNodes.length && wasEmpty) applyWakeFlash(); else if (realNodes.length && runtime.lastWakeFlashAt === 0) applyWakeFlash();
+      setStatus(realNodes.length ? 'Live neural graph loaded' : 'Graph is empty but ready');
+      return data;
+    }
+
+    function connectSSE() {
+      if (runtime.source) runtime.source.close();
+      const source = new EventSource('/api/neural/events'); runtime.source = source; sseStateEl.textContent = 'SSE live';
+      const markReal = () => { runtime.lastRealEvent = performance.now(); };
+      source.addEventListener('new_decision', (e) => { markReal(); const data = JSON.parse(e.data); addOrPulseNode('new_decision', data); const t = String(data.type || data.action || '').toUpperCase(); if (t === 'BUY' || t === 'REJECT') spawnScoringBreakdown(data); });
+      source.addEventListener('new_trade', (e) => { markReal(); addOrPulseNode('new_trade', JSON.parse(e.data)); });
+      source.addEventListener('new_fact', (e) => { markReal(); addOrPulseNode('new_fact', JSON.parse(e.data)); });
+      source.addEventListener('new_foresight', (e) => { markReal(); addOrPulseNode('new_foresight', JSON.parse(e.data)); });
+      source.addEventListener('new_learning', (e) => { markReal(); addOrPulseNode('new_learning', JSON.parse(e.data)); });
+      source.addEventListener('evolver_finding', (e) => { markReal(); const data = JSON.parse(e.data); addOrPulseNode('evolver_finding', data); if (['high','critical'].includes(String(data.severity || '').toLowerCase())) triggerErrorRipple('Judge'); });
+      source.addEventListener('thinking_start', (e) => { markReal(); const data = JSON.parse(e.data); setThinking(data.agent, true); });
+      source.addEventListener('thinking_end', (e) => { markReal(); const data = JSON.parse(e.data); setThinking(data.agent, false); });
+      source.addEventListener('data_packet', (e) => { markReal(); const data = JSON.parse(e.data); const src = graph.agents.get(String(data.source || '').replace(/^agent:/,'')) || graph.nodes.get(thinkingNameToId(data.source)); spawnPacket(data.source, data.target, src?.color || '#ffffff'); });
+      source.addEventListener('memory_retrieval', (e) => { markReal(); const data = JSON.parse(e.data); triggerRetrievalGlow(safeArray(data.hitIds)); });
+      source.addEventListener('error', (e) => { try { const data = JSON.parse(e.data); triggerErrorRipple(data.agent || 'Judge'); } catch { triggerErrorRipple('Judge'); } });
+      source.addEventListener('heartbeat', () => {});
+      source.onerror = () => { sseStateEl.textContent = 'SSE reconnecting…'; try { source.close(); } catch {} setTimeout(connectSSE, 5000); };
+    }
+
+    function simulateIfQuiet(now) {
+      if (runtime.lastRealEvent && now - runtime.lastRealEvent < 5000) return;
+      if (!runtime.nextPacketAt || now > runtime.nextPacketAt) {
+        const names = Object.keys(AGENTS); const a = names[Math.floor(Math.random()*names.length)]; let b = names[Math.floor(Math.random()*names.length)]; if (a === b) b = names[(names.indexOf(a)+1)%names.length];
+        spawnPacket(a, b, graph.agents.get(a)?.color || '#ffffff'); runtime.nextPacketAt = now + 5000 + Math.random()*5000;
+      }
+      if (!runtime.nextRetrievalAt || now > runtime.nextRetrievalAt) { triggerRetrievalGlow(); runtime.nextRetrievalAt = now + 15000 + Math.random()*15000; }
+      if (!runtime.nextThinkAt || now > runtime.nextThinkAt) {
+        const names = Object.keys(AGENTS).sort(() => Math.random()-0.5).slice(0, 2); names.forEach(name => { setThinking(name, true); runtime.simulatedThinking.set(name, now + 3000 + Math.random()*2000); }); runtime.nextThinkAt = now + 6000 + Math.random()*6000;
+      }
+      for (const [name, until] of runtime.simulatedThinking.entries()) if (now > until) { setThinking(name, false); runtime.simulatedThinking.delete(name); }
+    }
+
+    function animate(time) {
+      requestAnimationFrame(animate);
+      controls.update();
+      if (runtime.autoRotate) root.rotation.y += THREE.MathUtils.degToRad(0.1);
+      simulateIfQuiet(time);
+
+      for (const node of graph.nodes.values()) {
+        if (node.type === 'agent' && node.mesh && (node.label === 'Dex')) {
+          const c = rainbowColor(time * 0.00025); node.mesh.material.color.copy(c); node.mesh.material.emissive.copy(c).multiplyScalar(0.45); if (node.ring) node.ring.material.color.copy(c); if (node.halo) node.halo.material.opacity = 0.32 + Math.sin(time * 0.002) * 0.06;
+        }
+        const sinceHit = time - (node.lastHitAt || 0); const stale = sinceHit > 300000;
+        node.targetScale = 0.5 + Math.min((node.accessCount || 0) / 20, 1.5); if (stale) node.targetScale *= 0.85;
+        node.targetOpacity = 0.3 + Math.min((node.accessCount || 0) / 30, 0.7); if (stale) node.targetOpacity *= 0.75;
+        const desired = clamp(node.type === 'centroid' ? 1 : node.targetScale, node.type === 'centroid' ? 1 : 0.45, 2.25);
+        node.container.scale.lerp(new THREE.Vector3(desired, desired, desired), 0.08);
+        if (node.mesh?.material) {
+          node.mesh.material.opacity = THREE.MathUtils.lerp(node.mesh.material.opacity ?? 1, node.type === 'agent' ? 1 : clamp(node.targetOpacity, 0.18, 1), 0.08);
+          node.emissiveBoost = THREE.MathUtils.lerp(node.emissiveBoost || 0, 0, 0.04);
+          if (node.mesh.material.emissive) node.mesh.material.emissive.multiplyScalar(0.94).add(new THREE.Color(node.color || '#ffffff').multiplyScalar(0.02 + (node.emissiveBoost || 0) * 0.12));
+        }
+        if (node.thinking && node.ring) {
+          node.ring.material.opacity = 0.8; const s = 1.2 + Math.sin(time * 0.006) * 0.15; node.ring.scale.setScalar(s);
+        } else if (node.ring) node.ring.material.opacity = THREE.MathUtils.lerp(node.ring.material.opacity, 0, 0.12);
+        if (node.flashUntil && time < node.flashUntil && node.mesh?.material?.emissive) node.mesh.material.emissive.addScalar(0.12);
+      }
+
+      for (const edge of graph.edges) {
+        const pts = [graph.nodes.get(edge.sourceId)?.container.position, graph.nodes.get(edge.targetId)?.container.position]; if (pts[0] && pts[1]) edge.line.geometry.setFromPoints(pts);
+        const boosted = time < edge.boostedUntil; edge.material.opacity = THREE.MathUtils.lerp(edge.material.opacity, boosted ? 0.8 : (edge.line.userData.baseOpacity || 0.12), boosted ? 0.12 : 0.04);
+      }
+      for (const pkt of graph.packets) if (pkt.active) {
+        const p = clamp((time - pkt.born) / pkt.duration, 0, 1); pkt.leader.position.lerpVectors(pkt.start, pkt.end, p); pkt.leader.material.opacity = 1 - Math.max(0, p - 0.8) * 5;
+        pkt.trails.forEach((trail, i) => { const tp = clamp(p - (i + 1) * 0.06, 0, 1); trail.position.lerpVectors(pkt.start, pkt.end, tp); trail.material.opacity = (1 - p) * (0.45 - i * 0.09); });
+        if (p >= 1) { pkt.active = false; pkt.leader.material.opacity = 0; pkt.trails.forEach(t => t.material.opacity = 0); }
+      }
+      for (const slot of graph.breakdownPool) if (slot.active) {
+        const p = clamp((time - slot.born) / slot.life, 0, 1); slot.group.position.y += Math.sin(time * 0.01) * 0.002; slot.mesh.material.opacity = p < 0.66 ? 0.92 : (1 - p) * 2.7; slot.group.scale.setScalar(1 + Math.sin(time * 0.012) * 0.08); if (p >= 1) { slot.active = false; slot.mesh.material.opacity = 0; }
+      }
+      graph.ripples = graph.ripples.filter(r => {
+        const p = clamp((time - r.born) / r.life, 0, 1); r.mesh.scale.setScalar(1 + p * 5); r.mesh.material.opacity = (1 - p) * 0.6; if (p >= 1) { tempGroup.remove(r.mesh); return false; } return true;
+      });
+
+      raycaster.setFromCamera(mouse, camera); const intersects = raycaster.intersectObjects([...graph.byMesh.keys()], false); const hit = intersects[0] ? graph.byMesh.get(intersects[0].object) : null;
+      if (hit) {
+        tooltipEl.style.display = 'block'; tooltipEl.style.left = `${runtime.lastPointer.x + 16}px`; tooltipEl.style.top = `${runtime.lastPointer.y + 16}px`;
+        tooltipEl.innerHTML = `<div class="kind">${htmlEscape(hit.type)}</div><div><strong>${htmlEscape(hit.label || hit.id)}</strong></div><div>${htmlEscape(truncate(hit.text || '', 120))}</div>`;
+      } else tooltipEl.style.display = 'none';
+
+      renderer.render(scene, camera);
+    }
+
+    addEventListener('pointermove', (event) => {
+      runtime.lastPointer = { x: event.clientX, y: event.clientY };
+      mouse.x = (event.clientX / innerWidth) * 2 - 1; mouse.y = -(event.clientY / innerHeight) * 2 + 1;
+    });
+    renderer.domElement.addEventListener('click', () => {
+      raycaster.setFromCamera(mouse, camera); const hit = raycaster.intersectObjects([...graph.byMesh.keys()], false)[0]; if (!hit) return; const node = graph.byMesh.get(hit.object); if (node) openDetail(node);
+    });
+    closeDetailBtn.addEventListener('click', closeDetail);
+    addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); if (e.code === 'Space') { e.preventDefault(); runtime.autoRotate = !runtime.autoRotate; rotationStateEl.textContent = runtime.autoRotate ? 'Auto-rotate on' : 'Auto-rotate off'; } });
+    addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+    refreshBtn.addEventListener('click', async () => { setStatus('Refreshing neural graph…'); await loadAll(); });
+
+    await loadAll();
+    connectSSE();
+    setInterval(loadAll, AUTO_REFRESH_MS);
+    animate(performance.now());
+  </script>
+</body>
+</html>
