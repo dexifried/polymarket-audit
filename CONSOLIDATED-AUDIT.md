@@ -169,3 +169,27 @@
 - **Unhandled fetch calls:** API failures throw unhandled rejections (lib/context_retrieval.js, lib/atomic_facts.js, lib/foresight_extractor.js, lib/provider_routing.js)
 - **process.exit without cleanup:** 10+ instances — WAL locks and file handles abandoned
 - **No retry logic** except WebSocket connector (exponential backoff — good)
+
+---
+
+## Fixes Applied (2026-03-26)
+
+All 2 critical + 12 high findings fixed. 11 files changed, 499 insertions, 258 deletions.
+
+| ID | Finding | Status | File |
+|----|---------|--------|------|
+| C1 | Execution agent CJS→ESM | ✅ Fixed | scripts/agents/execution_agent.js |
+| C2 | WAL API mismatch | ✅ Fixed | lib/wal.js |
+| H1 | WAL race condition | ✅ Fixed | lib/wal.js (lockfile added) |
+| H2 | WAL counter ordering | ✅ Fixed | lib/wal.js (append first, counter second) |
+| H3 | WAL FD leak | ✅ Fixed | lib/wal.js (fs.appendFile) |
+| H4 | Open orders no locking | ✅ Fixed | lib/memory.js |
+| H5 | Paper fill reuse | ✅ Fixed | scripts/paper_trade.js |
+| H7 | L2 rejection fill data | ✅ Fixed | lib/l2_simulator.js |
+| H8 | Order quantization | ✅ Fixed | lib/order_manager.js |
+| H9 | Position double-close | ✅ Fixed | lib/position_monitor.js |
+| H10 | Credential permissions | ✅ Fixed | scripts/setup_auth.js |
+| H11 | Arbitrary script exec | ✅ Fixed | scripts/paper_autotrader.js |
+| H12 | LLM prompt injection | ✅ Fixed | lib/prompt_templates.js, evidence_bundle.js, cloud_judge.js |
+
+All fixes verified with `node --check` syntax validation.
