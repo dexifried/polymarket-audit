@@ -25,7 +25,7 @@ try {
   console.log("✅ Credentials derived!");
 
   // Save to file (0600)
-  writeFileSync(getCredentialsPath(), JSON.stringify(apiCreds, null, 2));
+  writeFileSync(getCredentialsPath(), JSON.stringify(apiCreds, null, 2), { mode: 0o600 });
   console.log("💾 Saved to .polymarket-credentials.json (0600)");
 
   // Verify by initializing trading client and fetching markets

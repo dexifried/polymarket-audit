@@ -80,6 +80,11 @@ function simulate(signals, marketFills) {
   const orders = [];
   let cash = 0; // USDC cash flow (negative = spent)
   const positions = {}; // tokenId -> size
+  const availableMarketFills = marketFills.map((fill, index) => ({
+    ...fill,
+    remainingSize: Number(fill.size) > 0 ? Number(fill.size) : 0,
+    sourceIndex: index,
+  }));
 
   for (const sig of signals) {
     const tokenId = sig.tokenId || sig.instrumentId || (sig.meta && sig.meta.token_id);
@@ -100,12 +105,13 @@ function simulate(signals, marketFills) {
     orders.push(order);
 
     // match market fills for this tokenId
-    for (const m of marketFills) {
+    for (const m of availableMarketFills) {
       if (order.remaining <= 0) break;
       if (m.tokenId != order.tokenId) continue;
+      if (!(m.remainingSize > 0)) continue;
       // price match logic: for BUY, accept fills with price <= order.price
       if (order.side === 'BUY' && m.price <= order.price) {
-        const take = Math.min(order.remaining, m.size);
+        const take = Math.min(order.remaining, m.remainingSize);
         const f = {
           fillId: `paperfill-${fills.length+1}`,
           orderId: order.orderId,
@@ -118,10 +124,11 @@ function simulate(signals, marketFills) {
         };
         fills.push(f);
         order.remaining -= take;
+        m.remainingSize -= take;
         cash -= f.price * f.size; // spent
         positions[order.tokenId] = (positions[order.tokenId] || 0) + (order.side === 'BUY' ? f.size : -f.size);
       } else if (order.side === 'SELL' && m.price >= order.price) {
-        const take = Math.min(order.remaining, m.size);
+        const take = Math.min(order.remaining, m.remainingSize);
         const f = {
           fillId: `paperfill-${fills.length+1}`,
           orderId: order.orderId,
@@ -134,6 +141,7 @@ function simulate(signals, marketFills) {
         };
         fills.push(f);
         order.remaining -= take;
+        m.remainingSize -= take;
         cash += f.price * f.size; // received
         positions[order.tokenId] = (positions[order.tokenId] || 0) - (order.side === 'SELL' ? f.size : -f.size);
       }

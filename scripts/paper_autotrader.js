@@ -15,6 +15,9 @@ import { storeReflection, generateReflection } from '../lib/agent_memory.js';
 import { processNewPosition } from '../lib/foresight_extractor.js';
 
 const execFileAsync = promisify(execFile);
+const ALLOWED_TRADING_AGENT_SCRIPTS = new Set([
+  resolve(SKILL_ROOT, 'scripts', 'llm_caller.js'),
+]);
 const args = minimist(process.argv.slice(2));
 const once = Boolean(args.once);
 const useTradingAgents = process.env.TRADING_AGENTS_ENABLED === '1' || Boolean(args['use-tradingagents']);
@@ -820,17 +823,34 @@ async function evaluateEntries(state, liveMarkets, polyglobeIntel = null) {
   return scored[0] || null;
 }
 
-async function callTradingAgentsLlm(messages) {
-  const scriptPath = process.env.TRADING_AGENTS_LLM_SCRIPT;
-  if (!scriptPath) {
+function resolveTradingAgentsScript() {
+  const configuredPath = process.env.TRADING_AGENTS_LLM_SCRIPT;
+  if (!configuredPath) {
     throw new Error('TRADING_AGENTS_LLM_SCRIPT not set');
   }
+  if (configuredPath.startsWith('/') || configuredPath.includes('..')) {
+    throw new Error('TRADING_AGENTS_LLM_SCRIPT must be a repo-relative allowlisted script');
+  }
+
+  const resolvedPath = resolve(SKILL_ROOT, configuredPath);
+  if (!ALLOWED_TRADING_AGENT_SCRIPTS.has(resolvedPath)) {
+    throw new Error(`TRADING_AGENTS_LLM_SCRIPT is not allowlisted: ${configuredPath}`);
+  }
+
+  return resolvedPath;
+}
+
+async function callTradingAgentsLlm(messages) {
+  const scriptPath = resolveTradingAgentsScript();
+  const childEnv = { ...process.env };
+  delete childEnv.PRIVATE_KEY;
+
   const stdout = execFileSync('node', [scriptPath], {
     input: JSON.stringify(messages),
     encoding: 'utf8',
     timeout: Number(process.env.TRADING_AGENTS_LLM_TIMEOUT_MS || 120000),
     maxBuffer: 2 * 1024 * 1024,
-    env: process.env,
+    env: childEnv,
   });
   return String(stdout || '').trim();
 }
