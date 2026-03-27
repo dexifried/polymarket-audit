@@ -1,10 +1,12 @@
+import asyncio
+from datetime import datetime
 import os
 import json
+import re
 import subprocess
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 SKILL_ROOT = Path(os.getenv('SKILL_ROOT', '/root/.openclaw/workspace/skills/polymarket-trading.skill'))
@@ -14,15 +16,55 @@ CONFIG_DIR = SKILL_ROOT / 'config'
 SCRIPTS_DIR = SKILL_ROOT / 'scripts'
 SERVICES_DIR = SKILL_ROOT / 'services'
 STATIC_DIR = SERVICES_DIR / 'static'
+LOGS_DIR = SKILL_ROOT / 'logs'
+PIDS_DIR = SKILL_ROOT / 'var' / 'pids'
+AGENTS_DIR = SCRIPTS_DIR / 'agents'
+
+SAFE_CONFIG_RE = re.compile(r'^[A-Za-z0-9._-]+\.json$')
+SUPPORTED_AGENTS = {'signal', 'execution', 'risk', 'scheduler', 'ws_market_connector'}
+ALLOWED_LOG_FILES = {'agent', 'metrics', 'signal', 'execution', 'risk', 'scheduler', 'ws_market_connector', 'trading', 'api_server'}
+WS_MAX_CONNECTIONS = int(os.getenv('WS_MAX_CONNECTIONS', '10'))
+WS_AUTH_TOKEN = os.getenv('API_TOKEN') or os.getenv('DASHBOARD_WS_TOKEN')
+ACTIVE_WS_CONNECTIONS = set()
+WS_CONNECTIONS_LOCK = asyncio.Lock()
 
 app = FastAPI(title="DEX_POLYGRAPH API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+
+def resolve_under_dir(base_dir: Path, candidate: Path) -> Path:
+    base_resolved = base_dir.resolve(strict=False)
+    candidate_resolved = candidate.resolve(strict=False)
+    try:
+        candidate_resolved.relative_to(base_resolved)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='Invalid path') from exc
+    return candidate_resolved
+
+
+def require_supported_agent(name: str) -> str:
+    if name not in SUPPORTED_AGENTS:
+        raise HTTPException(status_code=404, detail='Unknown agent')
+    return name
+
+
+def get_ws_token(websocket: WebSocket) -> str | None:
+    auth_header = websocket.headers.get('authorization', '')
+    if auth_header.startswith('Bearer '):
+        return auth_header[7:].strip()
+    return websocket.query_params.get('token')
+
+
+async def register_ws_connection(websocket: WebSocket) -> bool:
+    async with WS_CONNECTIONS_LOCK:
+        if len(ACTIVE_WS_CONNECTIONS) >= WS_MAX_CONNECTIONS:
+            return False
+        ACTIVE_WS_CONNECTIONS.add(id(websocket))
+        return True
+
+
+async def unregister_ws_connection(websocket: WebSocket) -> None:
+    async with WS_CONNECTIONS_LOCK:
+        ACTIVE_WS_CONNECTIONS.discard(id(websocket))
 
 # Helper: run node script and capture JSON stdout
 def run_node_script(script_name: str, *args):
@@ -78,22 +120,33 @@ def wal_recent(source: str = None, limit: int = 50):
 # --- WAL WebSocket ---
 @app.websocket("/ws/wal")
 async def ws_wal(websocket: WebSocket):
-    await websocket.accept()
-    if not WAL_PATH.exists():
-        await websocket.close()
+    if not WS_AUTH_TOKEN or get_ws_token(websocket) != WS_AUTH_TOKEN:
+        await websocket.close(code=1008)
         return
-    with open(WAL_PATH, 'r') as f:
-        f.seek(0, os.SEEK_END)
-        while True:
-            line = f.readline()
-            if not line:
-                await asyncio.sleep(1)
-                continue
-            try:
-                entry = json.loads(line)
-                await websocket.send_json(entry)
-            except json.JSONDecodeError:
-                continue
+    if not await register_ws_connection(websocket):
+        await websocket.close(code=1013)
+        return
+    await websocket.accept()
+    try:
+        if not WAL_PATH.exists():
+            await websocket.close(code=1000)
+            return
+        with open(WAL_PATH, 'r') as f:
+            f.seek(0, os.SEEK_END)
+            while True:
+                line = f.readline()
+                if not line:
+                    await asyncio.sleep(1)
+                    continue
+                try:
+                    entry = json.loads(line)
+                    await websocket.send_json(entry)
+                except json.JSONDecodeError:
+                    continue
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await unregister_ws_connection(websocket)
 
 # --- Positions ---
 @app.get("/positions")
@@ -180,9 +233,9 @@ async def risk_reset():
 # --- Logs tail ---
 @app.get("/logs")
 def logs(file: str = 'agent', limit: int = 100):
-    # Assume logs stored under SKILL_ROOT/logs/
-    log_dir = SKILL_ROOT / 'logs'
-    log_file = log_dir / f'{file}.log'
+    if file not in ALLOWED_LOG_FILES:
+        raise HTTPException(status_code=404, detail='Log file not found')
+    log_file = resolve_under_dir(LOGS_DIR, LOGS_DIR / f'{file}.log')
     if not log_file.exists():
         raise HTTPException(status_code=404, detail='Log file not found')
     lines = []
@@ -204,7 +257,9 @@ def get_config():
 
 @app.put("/config/{name}")
 def put_config(name: str, data: dict):
-    dest = CONFIG_DIR / name
+    if not SAFE_CONFIG_RE.fullmatch(name):
+        raise HTTPException(status_code=400, detail='Invalid config name')
+    dest = resolve_under_dir(CONFIG_DIR, CONFIG_DIR / name)
     if not dest.parent.exists():
         dest.parent.mkdir(parents=True)
     with open(dest, 'w') as f:
@@ -233,13 +288,13 @@ def agents_status():
 
 @app.post("/agents/{name}/start")
 def agent_start(name: str):
-    script = SCRIPTS_DIR / 'agents' / f'{name}_agent.js'
+    name = require_supported_agent(name)
+    script = resolve_under_dir(AGENTS_DIR, AGENTS_DIR / f'{name}_agent.js')
     if not script.exists():
         raise HTTPException(status_code=404, detail='Agent script not found')
     # Start in background, write PID file
-    pids_dir = SKILL_ROOT / 'var' / 'pids'
-    pids_dir.mkdir(parents=True, exist_ok=True)
-    pid_file = pids_dir / f'{name}.pid'
+    PIDS_DIR.mkdir(parents=True, exist_ok=True)
+    pid_file = resolve_under_dir(PIDS_DIR, PIDS_DIR / f'{name}.pid')
     # Use setsid to fully daemonize
     proc = subprocess.Popen(
         ['node', str(script)],
@@ -254,7 +309,8 @@ def agent_start(name: str):
 
 @app.post("/agents/{name}/stop")
 def agent_stop(name: str):
-    pid_file = SKILL_ROOT / 'var' / 'pids' / f'{name}.pid'
+    name = require_supported_agent(name)
+    pid_file = resolve_under_dir(PIDS_DIR, PIDS_DIR / f'{name}.pid')
     if not pid_file.exists():
         raise HTTPException(status_code=404, detail='PID file not found')
     pid = int(pid_file.read_text().strip())

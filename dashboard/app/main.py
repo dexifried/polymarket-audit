@@ -1,4 +1,7 @@
-from fastapi import FastAPI, Query
+import logging
+import os
+
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pathlib import Path
 from datetime import datetime, timezone
@@ -7,6 +10,7 @@ import json
 import time
 
 app = FastAPI(title="Polymarket Paper Trading Dashboard")
+logger = logging.getLogger(__name__)
 
 POLY_DIR = Path(__file__).parent.parent
 PAPER_DIR = POLY_DIR / "memory" / "paper"
@@ -32,6 +36,57 @@ PROFILES_PATH = PAPER_DIR / "agent_profiles.json"
 NEURAL_HTML_PATH = Path(__file__).parent / "neural.html"
 THREE_JS_PATH = Path(__file__).parent / "three.module.js"
 ORBIT_JS_PATH = Path(__file__).parent / "OrbitControls.js"
+
+
+def get_dashboard_api_key() -> str | None:
+    api_key = os.environ.get("DASHBOARD_API_KEY")
+    if api_key:
+        return api_key
+
+    env_path = Path("/root/.openclaw/workspace/.env")
+    if not env_path.exists():
+        return None
+
+    prefix = "DASHBOARD_API_KEY="
+    try:
+        for line in env_path.read_text().splitlines():
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip()
+                return value or None
+    except Exception:
+        return None
+    return None
+
+
+def get_request_api_key(request: Request) -> str | None:
+    header_key = request.headers.get("x-api-key")
+    if header_key:
+        return header_key.strip()
+
+    auth_header = request.headers.get("authorization")
+    if not auth_header:
+        return None
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() == "bearer" and token:
+        return token.strip()
+    return auth_header.strip()
+
+
+@app.middleware("http")
+async def dashboard_api_key_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        expected_api_key = get_dashboard_api_key()
+        if expected_api_key:
+            provided_api_key = get_request_api_key(request)
+            if provided_api_key != expected_api_key:
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
+@app.on_event("startup")
+async def warn_if_dashboard_api_key_missing():
+    if not get_dashboard_api_key():
+        logger.warning("DASHBOARD_API_KEY is not set; allowing unauthenticated access to /api/* endpoints.")
 
 
 def load_json(path: Path, default):
@@ -185,7 +240,6 @@ def sse(event_type: str, data):
 
 
 def build_agent_graph(account, polyglobe, context_cache, watchdog, ambiguity, batch_labels, provider):
-    availability = provider.get("availability", {}) if isinstance(provider, dict) else {}
     watch_ts = watchdog.get("ts") if isinstance(watchdog, dict) else None
     ambiguity_ts = ambiguity.get("ts") if isinstance(ambiguity, dict) else None
     batch_ts = (batch_labels.get("generatedAt") or batch_labels.get("ts")) if isinstance(batch_labels, dict) else None
@@ -211,9 +265,9 @@ def build_agent_graph(account, polyglobe, context_cache, watchdog, ambiguity, ba
         {"id": "qwenSub", "label": "Qwen 0.8B", "color": "#a78bfa", "called": recently_called(watch_ts) and not qwen_is_4b and not chill_mode_on, "online": is_online(watch_ts), "meta": "🎮 chill" if chill_mode_on else (qwen_model or "idle")},
         {"id": "qwen4b", "label": "Qwen 4B", "color": "#f472b6", "called": recently_called(watch_ts) and qwen_is_4b and not chill_mode_on, "online": is_online(watch_ts), "meta": "🎮 chill" if chill_mode_on else (qwen_model or "idle")},
         {"id": "ambiguity", "label": "Judge", "color": "#ef4444", "called": recently_called(ambiguity_ts), "online": is_online(ambiguity_ts), "meta": ambiguity.get("verdict")},
-        {"id": "cerebras", "label": "Cerebras", "color": "#fb7185", "called": recently_called(ambiguity_ts) and str(ambiguity.get("provider", "")).lower() == "cerebras", "online": is_online(ambiguity_ts), "meta": "on" if availability.get("cerebras") else "off"},
-        {"id": "sambanova", "label": "Samba", "color": "#38bdf8", "called": recently_called(batch_ts), "online": is_online(batch_ts), "meta": "on" if availability.get("sambanova") else "off"},
-        {"id": "hf", "label": "HF Burst", "color": "#f97316", "called": recently_called(hf_ts), "online": is_online(hf_ts), "meta": "on" if availability.get("huggingface") else "off"},
+        {"id": "cerebras", "label": "Cerebras", "color": "#fb7185", "called": recently_called(ambiguity_ts) and str(ambiguity.get("provider", "")).lower() == "cerebras", "online": is_online(ambiguity_ts), "meta": str(ambiguity.get("provider") or "idle")},
+        {"id": "sambanova", "label": "Samba", "color": "#38bdf8", "called": recently_called(batch_ts), "online": is_online(batch_ts), "meta": batch_labels.get("generatedAt") if isinstance(batch_labels, dict) else None},
+        {"id": "hf", "label": "HF Burst", "color": "#f97316", "called": recently_called(hf_ts), "online": is_online(hf_ts), "meta": hf_ts or "idle"},
     ]
     edges = [
         ["dex", "trader"],
@@ -234,14 +288,20 @@ def build_agent_graph(account, polyglobe, context_cache, watchdog, ambiguity, ba
 
 
 def build_provider_summary():
-    availability = {
-        "deepinfra": env_has("DEEPINFRA_API_KEY"),
-        "cerebras": env_has("CEREBRAS_API_KEY") or env_has("CEREBRAS_KEY"),
-        "sambanova": env_has("SAMBANOVA_API_KEY") or env_has("SAMBANOVA_KEY"),
-        "huggingface": env_has("HF_TOKEN") or env_has("HUGGINGFACE_TOKEN"),
-    }
     routing = load_json(ROUTING_PATH, {})
-    return {"routing": routing, "availability": availability}
+    configured = any(
+        env_has(key)
+        for key in (
+            "DEEPINFRA_API_KEY",
+            "CEREBRAS_API_KEY",
+            "CEREBRAS_KEY",
+            "SAMBANOVA_API_KEY",
+            "SAMBANOVA_KEY",
+            "HF_TOKEN",
+            "HUGGINGFACE_TOKEN",
+        )
+    )
+    return {"routing": routing, "configured": configured}
 
 
 def build_payload():
