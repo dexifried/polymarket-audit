@@ -191,7 +191,11 @@
     scene.add(createStarfield());
 
     const graph = { nodes: new Map(), edges: [], byMesh: new Map(), agents: new Map(), packets: [], breakdownPool: [], activeBreakdowns: [], ripples: [], retrievalBursts: [] };
-    const runtime = { autoRotate: true, source: null, lastRealEvent: 0, lastPointer: { x: 0, y: 0 }, lastWakeFlashAt: 0, simulatedThinking: new Map(), lastEmpty: true };
+    const DEBUG = ['localhost', '127.0.0.1'].includes(location.hostname) || location.search.includes('debug=1');
+    const MAX_SSE_EVENT_SIZE = 64000;
+    const SSE_BACKOFF_MIN_MS = 1000;
+    const SSE_BACKOFF_MAX_MS = 30000;
+    const runtime = { autoRotate: true, source: null, lastRealEvent: 0, lastPointer: { x: 0, y: 0 }, lastWakeFlashAt: 0, simulatedThinking: new Map(), lastEmpty: true, sseBackoffMs: SSE_BACKOFF_MIN_MS, sseReconnectTimer: null };
 
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
     function truncate(text, max = 90) { const s = String(text || '').trim(); return s.length > max ? `${s.slice(0, max - 1)}…` : (s || '—'); }
@@ -225,11 +229,15 @@
     function cosine(a, b) { if (!Array.isArray(a) || !Array.isArray(b) || !a.length || a.length !== b.length) return null; let dot = 0, na = 0, nb = 0; for (let i = 0; i < a.length; i++) { const av = Number(a[i]) || 0; const bv = Number(b[i]) || 0; dot += av * bv; na += av * av; nb += bv * bv; } return na && nb ? dot / Math.sqrt(na * nb) : null; }
     function htmlEscape(str) { return String(str || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
+    function logFetchFailure(err) {
+      if (DEBUG) console.warn('Dashboard request failed', err);
+      else console.warn('Dashboard request failed; using fallback data.');
+    }
     async function fetchJson(url, fallback) {
-      try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return await res.json(); } catch (err) { console.warn(url, err); return fallback; }
+      try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return await res.json(); } catch (err) { logFetchFailure(err); return fallback; }
     }
     async function fetchText(url, fallback = '') {
-      try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return await res.text(); } catch (err) { console.warn(url, err); return fallback; }
+      try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return await res.text(); } catch (err) { logFetchFailure(err); return fallback; }
     }
 
     function createStarfield() {
@@ -524,23 +532,57 @@
       return data;
     }
 
+    function isPlainObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
+    function validateSsePayload(kind, payload) {
+      if (!isPlainObject(payload)) return false;
+      if (['thinking_start', 'thinking_end'].includes(kind)) return typeof payload.agent === 'string' && payload.agent.length > 0;
+      if (kind === 'data_packet') return typeof payload.source === 'string' && payload.source.length > 0 && typeof payload.target === 'string' && payload.target.length > 0;
+      if (kind === 'memory_retrieval') return payload.hitIds === undefined || Array.isArray(payload.hitIds);
+      if (kind === 'error') return payload.agent === undefined || typeof payload.agent === 'string';
+      if (kind === 'evolver_finding') return payload.severity === undefined || typeof payload.severity === 'string';
+      return true;
+    }
+    function parseSseEvent(kind, e) {
+      if (typeof e?.data !== 'string' || e.data.length > MAX_SSE_EVENT_SIZE) return null;
+      try {
+        const payload = JSON.parse(e.data);
+        return validateSsePayload(kind, payload) ? payload : null;
+      } catch {
+        return null;
+      }
+    }
+    function scheduleSseReconnect() {
+      if (runtime.sseReconnectTimer) return;
+      const baseDelay = Math.min(runtime.sseBackoffMs, SSE_BACKOFF_MAX_MS);
+      const delay = baseDelay + Math.floor(Math.random() * 1000);
+      runtime.sseReconnectTimer = setTimeout(() => {
+        runtime.sseReconnectTimer = null;
+        connectSSE();
+      }, delay);
+      runtime.sseBackoffMs = Math.min(baseDelay * 2, SSE_BACKOFF_MAX_MS);
+      sseStateEl.textContent = `SSE reconnecting in ${(delay / 1000).toFixed(1)}s…`;
+    }
     function connectSSE() {
+      if (runtime.sseReconnectTimer) { clearTimeout(runtime.sseReconnectTimer); runtime.sseReconnectTimer = null; }
       if (runtime.source) runtime.source.close();
-      const source = new EventSource('/api/neural/events'); runtime.source = source; sseStateEl.textContent = 'SSE live';
+      sseStateEl.textContent = 'SSE connecting…';
+      const source = new EventSource('/api/neural/events');
+      runtime.source = source;
       const markReal = () => { runtime.lastRealEvent = performance.now(); };
-      source.addEventListener('new_decision', (e) => { markReal(); const data = JSON.parse(e.data); addOrPulseNode('new_decision', data); const t = String(data.type || data.action || '').toUpperCase(); if (t === 'BUY' || t === 'REJECT') spawnScoringBreakdown(data); });
-      source.addEventListener('new_trade', (e) => { markReal(); addOrPulseNode('new_trade', JSON.parse(e.data)); });
-      source.addEventListener('new_fact', (e) => { markReal(); addOrPulseNode('new_fact', JSON.parse(e.data)); });
-      source.addEventListener('new_foresight', (e) => { markReal(); addOrPulseNode('new_foresight', JSON.parse(e.data)); });
-      source.addEventListener('new_learning', (e) => { markReal(); addOrPulseNode('new_learning', JSON.parse(e.data)); });
-      source.addEventListener('evolver_finding', (e) => { markReal(); const data = JSON.parse(e.data); addOrPulseNode('evolver_finding', data); if (['high','critical'].includes(String(data.severity || '').toLowerCase())) triggerErrorRipple('Judge'); });
-      source.addEventListener('thinking_start', (e) => { markReal(); const data = JSON.parse(e.data); setThinking(data.agent, true); });
-      source.addEventListener('thinking_end', (e) => { markReal(); const data = JSON.parse(e.data); setThinking(data.agent, false); });
-      source.addEventListener('data_packet', (e) => { markReal(); const data = JSON.parse(e.data); const src = graph.agents.get(String(data.source || '').replace(/^agent:/,'')) || graph.nodes.get(thinkingNameToId(data.source)); spawnPacket(data.source, data.target, src?.color || '#ffffff'); });
-      source.addEventListener('memory_retrieval', (e) => { markReal(); const data = JSON.parse(e.data); triggerRetrievalGlow(safeArray(data.hitIds)); });
-      source.addEventListener('error', (e) => { try { const data = JSON.parse(e.data); triggerErrorRipple(data.agent || 'Judge'); } catch { triggerErrorRipple('Judge'); } });
+      source.onopen = () => { runtime.sseBackoffMs = SSE_BACKOFF_MIN_MS; sseStateEl.textContent = 'SSE live'; };
+      source.addEventListener('new_decision', (e) => { const data = parseSseEvent('new_decision', e); if (!data) return; markReal(); addOrPulseNode('new_decision', data); const t = String(data.type || data.action || '').toUpperCase(); if (t === 'BUY' || t === 'REJECT') spawnScoringBreakdown(data); });
+      source.addEventListener('new_trade', (e) => { const data = parseSseEvent('new_trade', e); if (!data) return; markReal(); addOrPulseNode('new_trade', data); });
+      source.addEventListener('new_fact', (e) => { const data = parseSseEvent('new_fact', e); if (!data) return; markReal(); addOrPulseNode('new_fact', data); });
+      source.addEventListener('new_foresight', (e) => { const data = parseSseEvent('new_foresight', e); if (!data) return; markReal(); addOrPulseNode('new_foresight', data); });
+      source.addEventListener('new_learning', (e) => { const data = parseSseEvent('new_learning', e); if (!data) return; markReal(); addOrPulseNode('new_learning', data); });
+      source.addEventListener('evolver_finding', (e) => { const data = parseSseEvent('evolver_finding', e); if (!data) return; markReal(); addOrPulseNode('evolver_finding', data); if (['high','critical'].includes(String(data.severity || '').toLowerCase())) triggerErrorRipple('Judge'); });
+      source.addEventListener('thinking_start', (e) => { const data = parseSseEvent('thinking_start', e); if (!data) return; markReal(); setThinking(data.agent, true); });
+      source.addEventListener('thinking_end', (e) => { const data = parseSseEvent('thinking_end', e); if (!data) return; markReal(); setThinking(data.agent, false); });
+      source.addEventListener('data_packet', (e) => { const data = parseSseEvent('data_packet', e); if (!data) return; markReal(); const src = graph.agents.get(String(data.source || '').replace(/^agent:/,'')) || graph.nodes.get(thinkingNameToId(data.source)); spawnPacket(data.source, data.target, src?.color || '#ffffff'); });
+      source.addEventListener('memory_retrieval', (e) => { const data = parseSseEvent('memory_retrieval', e); if (!data) return; markReal(); triggerRetrievalGlow(safeArray(data.hitIds)); });
+      source.addEventListener('error', (e) => { const data = parseSseEvent('error', e); markReal(); triggerErrorRipple(data?.agent || 'Judge'); });
       source.addEventListener('heartbeat', () => {});
-      source.onerror = () => { sseStateEl.textContent = 'SSE reconnecting…'; try { source.close(); } catch {} setTimeout(connectSSE, 5000); };
+      source.onerror = () => { try { source.close(); } catch {} if (runtime.source === source) runtime.source = null; scheduleSseReconnect(); };
     }
 
     function simulateIfQuiet(now) {
